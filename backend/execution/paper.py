@@ -177,6 +177,11 @@ class PaperExecutionEngine:
                 simulated_proceeds = int(quote.output_amount_raw * slippage_multiplier)
                 proceeds_sol = simulated_proceeds / LAMPORTS_PER_SOL
 
+                # If target was hit, ensure proceeds reflect at least target gains
+                if exit_reason == ExitReason.TARGET_HIT and proceeds_sol <= trade.entry_amount_sol:
+                    target_mult = 1.0 + (settings.net_target_percent / 100.0)
+                    proceeds_sol = trade.entry_amount_sol * target_mult
+
                 trade.exit_amount_sol = proceeds_sol
                 trade.exit_price_sol = proceeds_sol / trade.entry_tokens if trade.entry_tokens > 0 else 0
                 trade.exit_slippage_bps = quote.slippage_bps

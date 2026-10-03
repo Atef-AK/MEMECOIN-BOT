@@ -213,11 +213,19 @@ class AdaptiveStrategySelector:
         strat_result, position = viable[selected]
 
         # Step 6: Check minimum fitness threshold
+        # During bootstrapping / early sample phase (< 30 trades), compare raw fitness
+        # so new strategies can explore and build historical sample evidence.
         min_fitness = self._config.min_selector_fitness
-        if best_fitness.confidence_adjusted_fitness < min_fitness and not is_exploration:
+        effective_fitness = (
+            best_fitness.fitness_score
+            if best_fitness.trades < 30
+            else best_fitness.confidence_adjusted_fitness
+        )
+        min_required = min_fitness if best_fitness.trades >= 30 else 55.0
+
+        if effective_fitness < min_required and not is_exploration:
             decision.reasons = [
-                f"Best fitness {best_fitness.confidence_adjusted_fitness:.1f} "
-                f"below minimum {min_fitness:.0f}",
+                f"Best fitness {effective_fitness:.1f} below minimum {min_required:.0f}",
                 f"Best candidate: {selected.value} "
                 f"(raw={best_fitness.fitness_score:.1f}, "
                 f"adjusted={best_fitness.confidence_adjusted_fitness:.1f})",
