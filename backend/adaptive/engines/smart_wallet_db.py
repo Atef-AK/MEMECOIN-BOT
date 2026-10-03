@@ -50,11 +50,87 @@ class SmartWalletDB:
             timeout=httpx.Timeout(15.0),
             headers={"Content-Type": "application/json"},
         )
+        await self.load_from_db()
 
     async def stop(self) -> None:
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    async def load_from_db(self) -> None:
+        """Load smart wallets from SQLite database."""
+        try:
+            from backend.database.session import get_db_session
+            from backend.database.adaptive_models import SmartWalletDB as SmartWalletModel
+
+            async with get_db_session() as session:
+                from sqlalchemy import select
+                stmt = select(SmartWalletModel)
+                result = await session.execute(stmt)
+                db_wallets = result.scalars().all()
+
+                for w in db_wallets:
+                    profile = SmartWalletProfile(
+                        address=w.address,
+                        total_trades=w.total_trades,
+                        wins=w.wins,
+                        losses=w.losses,
+                        win_rate=w.win_rate,
+                        average_winner_percent=w.avg_winner_percent,
+                        average_loser_percent=w.avg_loser_percent,
+                        expectancy_percent=w.expectancy_percent,
+                        profit_factor=w.profit_factor,
+                        smart_wallet_score=w.smart_wallet_score,
+                        is_qualified=w.is_qualified,
+                    )
+                    self._wallets[w.address] = profile
+                
+                logger.info(f"Loaded {len(db_wallets)} smart wallets from DB ({len(self.get_qualified_wallets())} qualified)")
+        except Exception as e:
+            logger.warning(f"Could not load smart wallets from DB: {e}")
+
+    async def save_wallet_to_db(self, profile: SmartWalletProfile) -> None:
+        """Save a smart wallet profile to SQLite database."""
+        try:
+            from backend.database.session import get_db_session
+            from backend.database.adaptive_models import SmartWalletDB as SmartWalletModel
+            from sqlalchemy import select
+
+            async with get_db_session() as session:
+                stmt = select(SmartWalletModel).where(SmartWalletModel.address == profile.address)
+                res = await session.execute(stmt)
+                existing = res.scalar_one_or_none()
+
+                if existing:
+                    existing.total_trades = profile.total_trades
+                    existing.wins = profile.wins
+                    existing.losses = profile.losses
+                    existing.win_rate = profile.win_rate
+                    existing.avg_winner_percent = profile.average_winner_percent
+                    existing.avg_loser_percent = profile.average_loser_percent
+                    existing.expectancy_percent = profile.expectancy_percent
+                    existing.profit_factor = profile.profit_factor
+                    existing.is_qualified = profile.is_qualified
+                    existing.smart_wallet_score = profile.smart_wallet_score
+                    existing.last_updated = datetime.now(timezone.utc)
+                else:
+                    new_w = SmartWalletModel(
+                        address=profile.address,
+                        total_trades=profile.total_trades,
+                        wins=profile.wins,
+                        losses=profile.losses,
+                        win_rate=profile.win_rate,
+                        avg_winner_percent=profile.average_winner_percent,
+                        avg_loser_percent=profile.average_loser_percent,
+                        expectancy_percent=profile.expectancy_percent,
+                        profit_factor=profile.profit_factor,
+                        is_qualified=profile.is_qualified,
+                        smart_wallet_score=profile.smart_wallet_score,
+                    )
+                    session.add(new_w)
+                await session.commit()
+        except Exception as e:
+            logger.warning(f"Could not save wallet {profile.address} to DB: {e}")
 
     def get_wallet(self, address: str) -> SmartWalletProfile | None:
         return self._wallets.get(address)

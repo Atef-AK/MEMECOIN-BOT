@@ -151,6 +151,19 @@ class AdaptiveManager:
             buyer_acceleration=opp.momentum.buyer_acceleration,
         )
 
+        # Check smart wallet participation
+        wallets_to_check: list[str] = []
+        if hasattr(holders, "largest_non_lp_holder") and holders.largest_non_lp_holder:
+            wallets_to_check.append(holders.largest_non_lp_holder)
+        if hasattr(dev, "related_wallets") and dev.related_wallets:
+            wallets_to_check.extend(dev.related_wallets)
+        
+        if wallets_to_check:
+            opp.smart_wallet_signal = self.smart_wallets.check_token_participation(
+                mint_address=token.mint_address,
+                participating_wallets=wallets_to_check,
+            )
+
         return opp
 
     def select_strategy(

@@ -54,6 +54,22 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Async context manager for standalone DB operations."""
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency for FastAPI: yields an async session."""
     factory = get_session_factory()
