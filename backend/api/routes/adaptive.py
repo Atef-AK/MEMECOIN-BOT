@@ -167,11 +167,30 @@ async def enable_strategy(request: Request, strategy: str):
     if not adaptive:
         return {"error": "Adaptive engine not initialized"}
 
-    from backend.models.adaptive import StrategyName
-    try:
-        strat_name = StrategyName(strategy)
-    except ValueError:
-        return {"error": f"Unknown strategy: {strategy}"}
-
     adaptive.loss_protection.re_enable_strategy(strat_name)
     return {"status": "ok", "message": f"Strategy {strategy} re-enabled"}
+
+
+@router.get("/learning")
+async def get_learning_status(request: Request):
+    """Get continuous reinforcement self-learning metrics and adapted filters."""
+    from backend.api.routes.main import get_strategy_manager
+    manager = get_strategy_manager()
+    if not manager or not hasattr(manager, "learner"):
+        return {"error": "Learning engine not initialized"}
+
+    metrics = manager.learner.metrics
+    return {
+        "total_analyzed": metrics.total_samples,
+        "win_rate": f"{metrics.win_rate*100:.1f}%",
+        "profit_factor": f"{metrics.profit_factor:.2f}",
+        "adapted_min_score": metrics.adapted_min_score,
+        "adapted_min_liquidity_usd": metrics.adapted_min_liquidity_usd,
+        "adapted_max_hold_seconds": metrics.adapted_max_hold_seconds,
+        "winning_avg_liquidity": f"${metrics.winning_avg_liquidity:,.0f}",
+        "losing_avg_liquidity": f"${metrics.losing_avg_liquidity:,.0f}",
+        "winning_avg_score": f"{metrics.winning_avg_score:.1f}",
+        "losing_avg_score": f"{metrics.losing_avg_score:.1f}",
+        "winning_avg_hold_duration": f"{metrics.winning_avg_hold_duration:.0f}s",
+        "active_filters": metrics.active_filters,
+    }

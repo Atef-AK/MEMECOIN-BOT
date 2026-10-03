@@ -134,8 +134,8 @@ async def lifespan(app: FastAPI):
     banner = adaptive_manager.get_startup_banner(balance)
     logger.info(f"\n{banner}")
 
-    # Create and configure strategy manager
-    strategy_manager = StrategyManager()
+    # Create and configure strategy manager with adaptive engine
+    strategy_manager = StrategyManager(adaptive=adaptive_manager)
 
     # Register discovery providers
     strategy_manager.discovery.register_provider(PumpFunDiscoveryProvider())

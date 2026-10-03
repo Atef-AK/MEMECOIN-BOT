@@ -123,3 +123,7 @@ class TokenCandidate(BaseModel):
     # Critical failure flags
     has_critical_failure: bool = False
     critical_failures: list[str] = Field(default_factory=list)
+
+    # Full analysis reports and built opportunity
+    reports: dict = Field(default_factory=dict)
+    opportunity: Optional[Any] = None

@@ -43,16 +43,29 @@ from backend.security.engine import SecurityEngine
 from backend.social.engine import SocialEngine
 from backend.social.market_observer import MarketBehaviorObserver
 
+from backend.adaptive.manager import AdaptiveManager
+from backend.adaptive.intelligence.reinforcement import SelfLearningEngine
+from backend.models.adaptive import ExitType, StrategyName
+
 logger = logging.getLogger(__name__)
 
 
 class StrategyManager:
     """
     Central strategy orchestrator.
-    Connects all pipeline stages into a coherent trading system.
+    Connects all pipeline stages into a coherent trading system with adaptive reinforcement learning.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, adaptive: Optional[AdaptiveManager] = None) -> None:
+        settings = get_settings()
+
+        # Adaptive multi-strategy & self-learning intelligence
+        self.adaptive = adaptive or AdaptiveManager()
+        self.learner = SelfLearningEngine(
+            base_min_score=float(settings.min_score),
+            base_min_liquidity=float(settings.min_liquidity_usd),
+        )
+
         # Engines
         self.discovery = DiscoveryManager()
         self.security = SecurityEngine()
@@ -81,6 +94,9 @@ class StrategyManager:
 
     async def start(self) -> None:
         """Initialize all engines."""
+        if not self.adaptive._started:
+            await self.adaptive.start()
+
         await self.discovery.start()
         await self.security.start()
         await self.liquidity.start()
@@ -92,6 +108,16 @@ class StrategyManager:
         await self.monitor.start()
         await self.price_monitor.start()
         await self.telegram.start()
+
+        # Load historical trades from DB to train the Self-Learning Engine
+        try:
+            recent_trades_data = await self._repo.get_recent_trades(limit=100)
+            if recent_trades_data:
+                logger.info(f"🧠 Seeding Self-Learning Engine with {len(recent_trades_data)} historical trades from DB")
+                # Train learner
+                self.learner.learn_from_trades(recent_trades_data)
+        except Exception as e:
+            logger.warning(f"Could not load historical trades for self-learning: {e}")
 
         # Register kill switch callback
         kill_switch = get_kill_switch()
@@ -109,7 +135,7 @@ class StrategyManager:
             message=f"Bot started in {get_settings().effective_mode} mode",
         )
 
-        logger.info("Strategy manager started")
+        logger.info("Strategy manager started with adaptive intelligence enabled")
 
     async def stop(self) -> None:
         """Shutdown all engines."""
@@ -360,6 +386,14 @@ class StrategyManager:
         candidate.total_score = score.total_score
         candidate.has_critical_failure = score.has_critical_failure
         candidate.critical_failures = score.critical_failures
+        candidate.reports = {
+            "security": security_report,
+            "liquidity": liquidity_report,
+            "holders": holder_report,
+            "dev": dev_report,
+            "social": social_report,
+            "market": market_report,
+        }
 
         if score.is_tradeable:
             candidate.status = TokenStatus.CANDIDATE
@@ -382,9 +416,42 @@ class StrategyManager:
         return candidate
 
     async def _attempt_entry(self, candidate: TokenCandidate) -> None:
-        """Attempt to enter a trade for a qualifying candidate."""
+        """Attempt to enter a trade for a qualifying candidate using adaptive selection."""
         settings = get_settings()
         token = candidate.token
+
+        # Check self-learned admission thresholds
+        passed_learned, learned_reason = self.learner.should_admit_candidate(
+            candidate.total_score, token.current_liquidity_usd, candidate.holder_score
+        )
+        if not passed_learned:
+            candidate.status = TokenStatus.REJECTED
+            candidate.rejection_reason = RejectionReason.LOW_SCORE
+            logger.info(f"🧠 [SELF-LEARNING FILTER] Rejected {token.symbol}: {learned_reason}")
+            return
+
+        # Build Opportunity for Adaptive Multi-Strategy Engine
+        opp = await self.adaptive.build_opportunity(
+            token=token,
+            security=candidate.reports.get("security"),
+            liquidity=candidate.reports.get("liquidity"),
+            holders=candidate.reports.get("holders"),
+            dev=candidate.reports.get("dev"),
+            social=candidate.reports.get("social"),
+            market=candidate.reports.get("market"),
+        )
+        candidate.opportunity = opp
+
+        # Adaptive Multi-Strategy Selection (UCB exploration / confidence-adjusted fitness)
+        decision = self.adaptive.select_strategy(opp)
+        if decision.selected_strategy == StrategyName.NO_TRADE:
+            candidate.status = TokenStatus.REJECTED
+            candidate.rejection_reason = RejectionReason.LOW_SCORE
+            reasons_str = "; ".join(decision.reasons)
+            logger.info(f"🚫 ADAPTIVE SELECTOR REJECTED {token.symbol}: {reasons_str}")
+            return
+
+        strategy_name = decision.selected_strategy.value.replace("_", " ").title()
 
         # Pre-trade quote check
         quote = await self.paper_engine.simulate_quote_check(
@@ -434,14 +501,8 @@ class StrategyManager:
             holder_top10_percent=candidate.holder_score,
         )
 
-        # Strategy assignment based on opportunity profile
-        if candidate.market_score >= 4.0 and candidate.liquidity_score >= 12.0:
-            strategy_name = "Momentum Runner"
-        elif candidate.holder_score >= 18.0:
-            strategy_name = "Smart-Wallet Follower"
-        else:
-            strategy_name = "Fast Scalper"
         trade.strategy_name = strategy_name
+        trade._opportunity = opp  # Cache opportunity for feedback on sell
 
         if trade.entry_status.value == "confirmed":
             candidate.status = TokenStatus.TRADING
@@ -515,6 +576,56 @@ class StrategyManager:
 
         # Persist trade exit to DB
         await self._repo.save_trade(trade)
+
+        # Map exit reason to adaptive ExitType
+        if exit_reason == ExitReason.TARGET_HIT:
+            adaptive_exit_type = ExitType.TARGET_HIT
+        elif exit_reason == ExitReason.TRAILING_STOP:
+            adaptive_exit_type = ExitType.TRAILING_STOP
+        elif exit_reason == ExitReason.STOP_LOSS:
+            adaptive_exit_type = ExitType.STOP_LOSS
+        elif exit_reason == ExitReason.TIMEOUT:
+            adaptive_exit_type = ExitType.STAGNATION_TIMEOUT
+        else:
+            adaptive_exit_type = ExitType.EMERGENCY
+
+        # Reconstruct or fetch opportunity for adaptive learning feedback
+        opp = getattr(trade, "_opportunity", None)
+        if opp is None:
+            from backend.models.opportunity import TokenOpportunity
+            opp = TokenOpportunity(
+                mint_address=trade.mint_address,
+                symbol=trade.symbol,
+                liquidity_usd=trade.liquidity_usd,
+                security_score=trade.score,
+            )
+
+        # Feed trade result to Adaptive Multi-Strategy Engine
+        strat_enum = StrategyName.FAST_SCALPER
+        if "momentum" in trade.strategy_name.lower():
+            strat_enum = StrategyName.MOMENTUM_RUNNER
+        elif "smart" in trade.strategy_name.lower() or "wallet" in trade.strategy_name.lower():
+            strat_enum = StrategyName.SMART_WALLET_FOLLOWER
+
+        try:
+            self.adaptive.record_trade_complete(
+                strategy=strat_enum,
+                opportunity=opp,
+                net_pnl_percent=trade.net_pnl_percent,
+                net_pnl_sol=trade.net_pnl_sol,
+                position_size_sol=trade.entry_amount_sol,
+                entry_price_sol=trade.entry_price_sol,
+                exit_price_sol=trade.exit_price_sol,
+                fees_sol=trade.total_fees_sol,
+                time_in_trade=trade.time_to_exit_seconds,
+                exit_type=adaptive_exit_type,
+                exit_reason=trade.exit_decision,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record trade to adaptive engine: {e}")
+
+        # Feed to continuous reinforcement self-learning engine
+        self.learner.learn_from_trades(self._completed_trades)
 
         # Log risk event for emergency exits
         if exit_reason != ExitReason.TARGET_HIT:
