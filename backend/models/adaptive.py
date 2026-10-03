@@ -65,7 +65,9 @@ class ExitType(str, Enum):
     TARGET_HIT = "target_hit"
     PARTIAL_PROFIT = "partial_profit"
     TRAILING_STOP = "trailing_stop"
+    STOP_LOSS = "stop_loss"
     EMERGENCY = "emergency"
+    STAGNATION_TIMEOUT = "stagnation_timeout"
     TIME_LIMIT = "time_limit"
     MANUAL = "manual"
 
