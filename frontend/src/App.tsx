@@ -117,26 +117,35 @@ export default function App() {
 
   // WebSocket connection & live streaming
   useEffect(() => {
+    let isCleanedUp = false;
+    let timer: NodeJS.Timeout;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws`;
 
     function connect() {
+      if (isCleanedUp) return;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => {
+        if (!isCleanedUp) setConnected(true);
+      };
       ws.onclose = () => {
-        setConnected(false);
-        setTimeout(connect, 3000);
+        if (!isCleanedUp) {
+          setConnected(false);
+          timer = setTimeout(connect, 3000);
+        }
+      };
+      ws.onerror = () => {
+        ws.close();
       };
       ws.onmessage = (event) => {
+        if (isCleanedUp) return;
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === 'log_message' && msg.data) {
             setLogs((prev) => [...prev.slice(-250), msg.data]);
-          } else if (msg.type === 'token_discovered') {
-            fetchAll();
-          } else if (msg.type === 'trade_update' || msg.type === 'stats_update' || msg.type === 'position_update') {
+          } else if (msg.type === 'token_discovered' || msg.type === 'trade_update' || msg.type === 'stats_update' || msg.type === 'position_update') {
             fetchAll();
           }
         } catch {}
@@ -144,7 +153,15 @@ export default function App() {
     }
 
     connect();
-    return () => wsRef.current?.close();
+
+    return () => {
+      isCleanedUp = true;
+      clearTimeout(timer);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
   }, [fetchAll]);
 
   // Auto-scroll logs

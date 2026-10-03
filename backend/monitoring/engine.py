@@ -179,6 +179,22 @@ class PositionMonitor:
                 await sell_callback(trade.id, ExitReason.EMERGENCY_PRICE_CRASH)
                 return
 
+            # 5. Stagnation / Timeout exit (default: 300s / 5m for Fast Scalper)
+            trade_duration_seconds = 0.0
+            if trade.entry_time:
+                now_utc = datetime.utcnow()
+                entry_dt = trade.entry_time.replace(tzinfo=None) if trade.entry_time.tzinfo else trade.entry_time
+                trade_duration_seconds = (now_utc - entry_dt).total_seconds()
+
+            max_hold = getattr(settings, "fast_scalper_max_hold_seconds", 300)
+            if trade_duration_seconds >= max_hold:
+                logger.info(
+                    f"⏱️ TIMEOUT EXIT: {trade.symbol} held for {trade_duration_seconds:.0f}s (max: {max_hold}s) at {net_pnl_percent:+.1f}%"
+                )
+                self._exiting_trades.add(trade.id)
+                await sell_callback(trade.id, ExitReason.TIMEOUT)
+                return
+
     async def update_price(self, trade_id: str, price_sol: float) -> None:
         """Update the current price for a monitored position."""
         if trade_id in self._positions:
