@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -127,3 +127,7 @@ class TokenCandidate(BaseModel):
     # Full analysis reports and built opportunity
     reports: dict = Field(default_factory=dict)
     opportunity: Optional[Any] = None
+
+
+DiscoveredToken.model_rebuild()
+TokenCandidate.model_rebuild()

@@ -59,30 +59,36 @@ class SelfLearningEngine:
     def learn_from_trades(self, completed_trades: List[Any]) -> LearningMetrics:
         """
         Analyze all completed trades and adapt thresholds.
+        Supports both TradeRecord objects and DB trade dicts.
         """
         if not completed_trades:
             return self.metrics
 
-        winners = [t for t in completed_trades if getattr(t, "net_pnl_percent", 0) > 0]
-        losers = [t for t in completed_trades if getattr(t, "net_pnl_percent", 0) <= 0]
+        def _val(t: Any, key: str, default: float = 0.0) -> float:
+            if isinstance(t, dict):
+                return float(t.get(key, default) or default)
+            return float(getattr(t, key, default) or default)
+
+        winners = [t for t in completed_trades if _val(t, "net_pnl_percent") > 0]
+        losers = [t for t in completed_trades if _val(t, "net_pnl_percent") <= 0]
         total = len(completed_trades)
 
         self.metrics.total_samples = total
         self.metrics.win_rate = len(winners) / total if total > 0 else 0.0
 
-        total_wins = sum(getattr(t, "net_pnl_sol", 0) for t in winners)
-        total_losses = abs(sum(getattr(t, "net_pnl_sol", 0) for t in losers))
+        total_wins = sum(_val(t, "net_pnl_sol") for t in winners)
+        total_losses = abs(sum(_val(t, "net_pnl_sol") for t in losers))
         self.metrics.profit_factor = (total_wins / total_losses) if total_losses > 0 else (2.0 if total_wins > 0 else 1.0)
 
         # Average stats of winners vs losers
         if winners:
-            self.metrics.winning_avg_liquidity = sum(getattr(t, "liquidity_usd", 0) for t in winners) / len(winners)
-            self.metrics.winning_avg_score = sum(getattr(t, "score", 0) for t in winners) / len(winners)
-            self.metrics.winning_avg_hold_duration = sum(getattr(t, "time_to_exit_seconds", 0) for t in winners) / len(winners)
+            self.metrics.winning_avg_liquidity = sum(_val(t, "liquidity_usd") for t in winners) / len(winners)
+            self.metrics.winning_avg_score = sum(_val(t, "score") for t in winners) / len(winners)
+            self.metrics.winning_avg_hold_duration = sum(_val(t, "time_to_exit_seconds") for t in winners) / len(winners)
 
         if losers:
-            self.metrics.losing_avg_liquidity = sum(getattr(t, "liquidity_usd", 0) for t in losers) / len(losers)
-            self.metrics.losing_avg_score = sum(getattr(t, "score", 0) for t in losers) / len(losers)
+            self.metrics.losing_avg_liquidity = sum(_val(t, "liquidity_usd") for t in losers) / len(losers)
+            self.metrics.losing_avg_score = sum(_val(t, "score") for t in losers) / len(losers)
 
         # Self-adaptation logic
         active_filters = []
