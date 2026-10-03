@@ -140,6 +140,10 @@ class SmartWalletDB:
 
     def update_wallet(self, profile: SmartWalletProfile) -> None:
         """Update or insert a wallet profile and re-qualify."""
+        from backend.adaptive.engines.smart_wallet_scanner import is_valid_user_wallet
+        if not is_valid_user_wallet(profile.address):
+            return
+
         profile.is_qualified = self._check_qualification(profile)
         profile.smart_wallet_score = self._calculate_score(profile)
         self._wallets[profile.address] = profile
@@ -153,6 +157,10 @@ class SmartWalletDB:
         token_age_at_exit: float = 0,
     ) -> None:
         """Record a trade for a wallet and update its statistics."""
+        from backend.adaptive.engines.smart_wallet_scanner import is_valid_user_wallet
+        if not is_valid_user_wallet(address):
+            return
+
         profile = self._wallets.get(address)
         if not profile:
             profile = SmartWalletProfile(address=address)
